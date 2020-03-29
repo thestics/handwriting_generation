@@ -10,7 +10,8 @@ import tensorflow as tf
 from tensorflow.keras.layers import Dense, LSTM, Masking, add, Input, concatenate
 from tensorflow.keras.models import Sequential, Model
 
-from custom_mdn import MDN, get_custom_mixture_loss_func
+from mdn import MDN, get_mixture_loss_func
+from custom_mdn import MDN as _MDN, get_mixture_loss_func as _get_mixture_loss_func
 
 
 def get_lstm(amt, params):
@@ -45,11 +46,11 @@ def define_model2(N, batch_size, time_steps, vector_size, num_mixtures):
 
     out_dense = Dense(units=vector_size, activation='linear')(lvl3_out)
     out_proxy = add([out_dense, lstm1_proxy, lstm2_proxy, lstm3_proxy])
-    out = MDN(vector_size, num_mixtures)(out_proxy)
+    out = _MDN(vector_size - 1, num_mixtures)(out_proxy)
 
     m = Model(inputs=enter, outputs=out)
     m.compile(optimizer='rmsprop',
-              loss=get_custom_mixture_loss_func(num_mixtures))
+              loss=_get_mixture_loss_func(vector_size - 1, num_mixtures))
     return m
 
 
@@ -60,7 +61,7 @@ if __name__ == '__main__':
     X = X[:200]
     batch_size = 32
     _, time_steps, vector_size = X.shape
-    m = define_model2(N, None, None, vector_size, 5)
+    m = define_model2(N, batch_size, time_steps, vector_size, 5)
     print(m.summary())
     size = X.shape[0] - X.shape[0] % batch_size
     X_train = X[:size, :-1, :]
