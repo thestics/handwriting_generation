@@ -40,6 +40,7 @@ class MDN(layers.Layer):
     def __init__(self, output_dimension, num_mixtures, bias=0, **kwargs):
         self.output_dim = output_dimension
         self.num_mix = num_mixtures
+        self.bias = bias
 
         with tf.name_scope('MDN'):
             # end of stroke probability
@@ -54,7 +55,7 @@ class MDN(layers.Layer):
             # std`s
             self.mdn_std = layers.Dense(self.output_dim * self.num_mix,
                                          name='mdn_std1',
-                                         activation=biased_exp(bias))
+                                         activation=elu_plus_one_plus_epsilon)
             # correlation
             # self.mdn_rho = layers.Dense(self.num_mix, name='mdn_rho',
             #                             activation='tanh')
@@ -75,6 +76,15 @@ class MDN(layers.Layer):
             mdn_out = layers.concatenate([l(x) for l in self.layers],
                                          name='mdn_outputs')
         return mdn_out
+
+    def get_config(self):
+        config = {
+            "output_dimension": self.output_dim,
+            "num_mixtures": self.num_mix,
+            "bias": self.bias
+        }
+        base_config = super(MDN, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
 
 def get_mixture_loss_func(output_dim, num_mixes, eps=1e-8):
@@ -104,7 +114,7 @@ def get_mixture_loss_func(output_dim, num_mixes, eps=1e-8):
             axis=-1
         )
 
-        cat = tfd.Categorical(probs=out_pi)
+        cat = tfd.Categorical(logits=out_pi)
         components_splits = [output_dim] * num_mixes
         mus = tf.split(out_mus, num_or_size_splits=components_splits, axis=1)
         stds = tf.split(out_stds, num_or_size_splits=components_splits, axis=1)
@@ -115,7 +125,7 @@ def get_mixture_loss_func(output_dim, num_mixes, eps=1e-8):
         mix = tfd.Mixture(cat=cat, components=components)
         xs, ys, es = tf.unstack(y_true, axis=-1)
         X = tf.stack((xs, ys), axis=-1)
-        stroke = tfd.Bernoulli(probs=out_e)
+        stroke = tfd.Bernoulli(logits=out_e)
         loss1 = tf.negative(mix.log_prob(X))
         loss2 = tf.negative(stroke.log_prob(es))
         loss = tf.add(loss1, loss2)
