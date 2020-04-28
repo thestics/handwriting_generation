@@ -5,7 +5,8 @@
 
 import os
 import re
-import pickle
+import h5py
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 from xml.etree import ElementTree
 
 import numpy as np
@@ -103,7 +104,6 @@ def main():
     for cur_dir, sub_dirs, files in os.walk(lines_path):
         if not files: continue
         print_progressbar(amt, total_amt, length=20)
-        # print(f'\rProcessing dir: {cur_dir}, amt: {amt}', end='')
         amt += 1
         line_points = process_xml_dir(cur_dir)
         dir_id = get_dir_id(cur_dir)
@@ -113,22 +113,16 @@ def main():
             lines.extend(line_points)
             translations.extend(translation_lines)
 
-        if amt > 100: break
-
     return lines, translations
 
 
 # batch_size: 1053
 if __name__ == '__main__':
     lines, translations = main()
-    max_line = len(max(lines, key=lambda row: len(row)))
-    upd_lines = []
-    for line in lines:
-        new_line = [[0, 0, 0] for i in range(max_line - len(line))] + line
-        upd_lines.append(new_line)
-    lines = np.array(upd_lines)
+    lines = pad_sequences(lines, value=[0, 0, 0], padding='pre')
 
     translations = np.array(translations)
 
-    np.save('lines.npy', lines, allow_pickle=True)
-    np.save('translations.npy', translations, allow_pickle=True)
+    with h5py.File('dataset.h5', 'w') as f:
+        f.create_dataset('lines', data=lines)
+        # f.create_dataset('translations', data=translations)

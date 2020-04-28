@@ -2,7 +2,7 @@
 # -*-encoding: utf-8-*-
 # Author: Danil Kovalenko
 
-
+import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
 import tensorflow as tf
@@ -25,6 +25,33 @@ def biased_exp(bias=0):
     def activation(x):
         return tf.exp(x - bias)
     return activation
+
+
+def get_distributions_from_tensor(t, dimension, num_mixes):
+    y_pred = tf.reshape(t,
+                        [-1, (2 * num_mixes * dimension + 1) + num_mixes],
+                        name='reshape_ypreds')
+    out_e, out_pi, out_mus, out_stds = tf.split(
+        y_pred,
+        num_or_size_splits=[1,
+                            num_mixes,
+                            num_mixes * dimension,
+                            num_mixes * dimension],
+        name='mdn_coef_split',
+        axis=-1
+    )
+
+    cat = tfd.Categorical(logits=out_pi)
+    components_splits = [dimension] * num_mixes
+    mus = tf.split(out_mus, num_or_size_splits=components_splits, axis=1)
+    stds = tf.split(out_stds, num_or_size_splits=components_splits, axis=1)
+
+    components = [tfd.MultivariateNormalDiag(loc=mu_i, scale_diag=std_i)
+                  for mu_i, std_i in zip(mus, stds)]
+
+    mix = tfd.Mixture(cat=cat, components=components)
+    stroke = tfd.Bernoulli(logits=out_e)
+    return mix, stroke
 
 
 class MDN(layers.Layer):
@@ -71,6 +98,9 @@ class MDN(layers.Layer):
                 layer.build(input_shape)
         super(MDN, self).build(input_shape)
 
+    def compute_mask(self, inputs, mask=None):
+        return mask
+
     def call(self, x, mask=None):
         with tf.name_scope('MDN'):
             mdn_out = layers.concatenate([l(x) for l in self.layers],
@@ -81,7 +111,7 @@ class MDN(layers.Layer):
         config = {
             "output_dimension": self.output_dim,
             "num_mixtures": self.num_mix,
-            "bias": self.bias
+            "bias": self.bias,
         }
         base_config = super(MDN, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -135,3 +165,80 @@ def get_mixture_loss_func(output_dim, num_mixes, eps=1e-8):
     # Actually return the loss function
     with tf.name_scope('MDN'):
         return mdn_loss_func
+
+
+def get_sampling_func(output_dim, num_mixes):
+
+    def sample(y_pred):
+        mix, bernoulli = get_distributions_from_tensor(y_pred, output_dim,
+                                                       num_mixes)
+        a = mix.sample()
+        b = bernoulli.sample()
+        return a, b
+
+    return sample
+
+
+def sample(model, N, vector_size, num_mixes):
+    prev = model(np.array([[[0, 0, 0]]]))
+    sampler = get_sampling_func(vector_size - 1, num_mixes)
+    res = []
+
+    for i in range(N):
+        a, b = sampler(prev)
+        b = tf.dtypes.cast(b, tf.float32)
+        cur = tf.expand_dims(tf.concat((a, b), 1), 0)
+        res.append(cur[0, 0, :])
+        prev = model(cur)
+
+    return res
+
+
+def get_mixture_mse_accuracy(output_dim, num_mixes):
+    """
+    Construct an MSE accuracy function for the MDN layer
+    that takes one sample and compares to the true value.
+    """
+
+    # Construct a loss function with the right number of mixtures and outputs
+    def mse_func(y_true, y_pred):
+        # Reshape inputs in case this is used in a TimeDistributed layer
+        y_pred = tf.reshape(y_pred,
+                            [-1, (2 * num_mixes * output_dim + 1) + num_mixes],
+                            name='reshape_ypreds')
+
+        y_true = tf.reshape(y_true,
+                            [-1, output_dim + 1],
+                            name='reshape_ytrue')
+
+        out_e, out_pi, out_mus, out_stds = tf.split(
+            y_pred,
+            num_or_size_splits=[1,
+                                num_mixes,
+                                num_mixes * output_dim,
+                                num_mixes * output_dim],
+            name='mdn_coef_split',
+            axis=-1
+        )
+        cat = tfd.Categorical(logits=out_pi)
+        components_splits = [output_dim] * num_mixes
+        mus = tf.split(out_mus, num_or_size_splits=components_splits, axis=1)
+        stds = tf.split(out_stds, num_or_size_splits=components_splits, axis=1)
+
+        components = [tfd.MultivariateNormalDiag(loc=mu_i, scale_diag=std_i)
+                      for mu_i, std_i in zip(mus, stds)]
+
+        mix = tfd.Mixture(cat=cat, components=components)
+        stroke = tfd.Bernoulli(logits=out_e)
+
+        pos_samp = mix.sample()
+        stroke_samp = tf.cast(stroke.sample(), tf.float32)
+        samp = tf.concat((pos_samp, stroke_samp), axis=-1)
+
+        mse = tf.reduce_mean(tf.square(samp - y_true), axis=-1)
+        # Todo: temperature adjustment for sampling functon.
+        return mse
+
+    # Actually return the loss_func
+    with tf.name_scope('MDNLayer'):
+        return mse_func
