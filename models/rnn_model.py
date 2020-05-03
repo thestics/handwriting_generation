@@ -20,19 +20,21 @@ def get_lstm(amt, params):
     return [LSTM(**params) for i in range(amt)]
 
 
-def define_model(N, batch_size, time_steps, vector_size, num_mixtures):
+def define_model(N, depth, batch_size, time_steps, vector_size, num_mixtures):
     lstm_params = {'units': N,
                    'activation': 'tanh',
                    'return_sequences': True,
                    'batch_input_shape': (batch_size, time_steps, vector_size)
                    }
     model = Sequential()
-    model.add(LSTM(**lstm_params))
-    model.add(Dense(11))
-    # model.add(MDN(vector_size - 1, num_mixtures))
+    for i in range(depth):
+        model.add(LSTM(**lstm_params))
+
+    model.add(MDN(vector_size - 1, num_mixtures))
     model.compile(optimizer='rmsprop',
-                    loss=_get_mixture_loss_func(vector_size - 1, num_mixtures))
+                  loss=_get_mixture_loss_func(vector_size - 1, num_mixtures))
     return model
+
 
 def define_model2(N, batch_size, time_steps, vector_size, num_mixtures):
     "+ skip connections"
