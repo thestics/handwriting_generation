@@ -47,7 +47,8 @@ def relativize_line_points(line_points):
             res.append([0, 0, 0])
             continue
         x, y, end_status = point
-        res.append([x - cur_x, y - cur_y, end_status])
+        # somehow image is flipped, so second coord is negated
+        res.append([x - cur_x, -(y - cur_y), end_status])
         cur_x, cur_y = x, y
     return res
 
@@ -119,7 +120,9 @@ def main():
 # batch_size: 1053
 if __name__ == '__main__':
     lines, translations = main()
-    lines = pad_sequences(lines, value=[0, 0, 0], padding='pre')
+    lines = pad_sequences(lines, value=[0, 0, 0],
+                          padding='pre', truncating='pre',
+                          maxlen=750)
 
     translations = np.array(translations)
 
