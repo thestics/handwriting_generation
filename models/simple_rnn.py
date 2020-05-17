@@ -10,9 +10,17 @@ import tensorflow.keras.models as models
 import tensorflow.keras.layers as layers
 import matplotlib.pyplot as plt
 
-from mdn import MDN, get_mixture_loss_func, get_mixture_mse_accuracy, softmax, \
+from models.mdn import MDN, get_mixture_loss_func, get_mixture_mse_accuracy, softmax, \
     get_mixture_sampling_fun
-from callbacks import PlotResCallback
+from models.callbacks import PlotResCallback
+
+
+N = 400
+lstm_layers = 3
+batch_size = 64
+vector_size = 3
+num_mixtures = 20
+sampler = get_mixture_sampling_fun(vector_size, num_mixtures)
 
 
 def config_gpu():
@@ -54,11 +62,11 @@ def train(epochs=1):
         m.fit(X, Y, epochs=epochs, batch_size=batch_size,
               callbacks=[PlotResCallback(vector_size, num_mixtures, X)]
               )
-    m.save('model/hwg_0001.tf')
+    m.save('model/hwg_0002.tf')
 
 
-def load():
-    m = models.load_model('model/hwg_0001.tf', custom_objects={
+def load(path):
+    m = models.load_model(path, custom_objects={
         'mdn_loss_func': get_mixture_loss_func(vector_size, num_mixtures)})
     print(m.summary())
     return m
@@ -81,11 +89,10 @@ def sample(m, n, start=None):
     return res
 
 
-def plot_sample(fig, s, display=True, c='b'):
+def plot_sample(ax, s, display=True, c='b'):
     x, y = [], []
     cur_x = 0
     cur_y = 0
-    # fig.set_size_inches(10, 2)
 
     for p in s:
         cur_x += p[0]
@@ -95,32 +102,29 @@ def plot_sample(fig, s, display=True, c='b'):
 
         # if end-of-stoke
         if p[2] >= 0.5:
-            fig.gca().plot(x, y, c)
+            ax.plot(x, y, c)
             x, y = [], []
 
-    fig.gca().plot(x, y, c)
+    ax.plot(x, y, c)
     if display:
         plt.show()
 
 
 if __name__ == '__main__':
-    N = 400
-    lstm_layers = 3
-    batch_size = 64
-    vector_size = 3
-    num_mixtures = 20
     config_gpu()
-    # train(epochs=30)
+    train(epochs=30)
 
     X, _, _= get_dataset('../dataset.h5')
-    m = load()
+    m = load('model/hwg_0001.tf')
+
     for i in range(20, 200):
         s = X[i]
         fig = plt.gcf()
-        plot_sample(fig, s, display=False, c='r')
+        ax = fig.gca()
+        plot_sample(ax, s, display=False, c='r')
         st = tf.expand_dims(s, 0)
-        sampler = get_mixture_sampling_fun(vector_size, num_mixtures)
+        # sampler = get_mixture_sampling_fun(vector_size, num_mixtures)
         y_pred = sampler(m(tf.expand_dims(s, 0)))
-        plot_sample(fig, y_pred, display=True, c='g')
+        plot_sample(ax, y_pred, display=True, c='g')
         fig.savefig(f'media/sample/{i}.jpg')
         plt.show()

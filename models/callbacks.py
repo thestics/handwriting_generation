@@ -6,7 +6,7 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-from mdn import get_mixture_sampling_fun
+from models.mdn import get_mixture_sampling_fun
 
 
 class PlotResCallback(tf.keras.callbacks.Callback):

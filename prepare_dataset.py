@@ -6,9 +6,10 @@
 import os
 import re
 import h5py
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+import random
 from xml.etree import ElementTree
 
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 import numpy as np
 
 
@@ -34,23 +35,41 @@ def process_ascii_dir(dir_id):
         return data.group(1).split('\n') if data else []
 
 
-def relativize_line_points(line_points):
+def normalize_line_points(line_points: np.ndarray):
+    """Shift horizontally, normalize"""
+
+    # we dont subtract mean horizontally as we want
+    # to preserve 'move' of handwriting, otherwise we would get "fluctuations"
+    # near zero
+    # line_points[:, 0] -= np.min(line_points[:, 0])
+    # line_points[:, 1] -= np.mean(line_points[:, 1])
+
+    std = np.std(line_points[:, :2])
+    line_points[:, 0] /= std
+    line_points[:, 1] /= std
+    return line_points
+
+
+def relativize_line_points(line_points: np.ndarray):
     """Rebuild all absolute coordinates to relative offsets"""
-    res = []
+    points = np.array(line_points)
+    length, vec_size = points.shape
+    res = np.empty(shape=(length - 1, vec_size))
 
-    first = True
-    cur_x, cur_y, _ = line_points[0]
+    # consecutive differences of coordinates (offsets)
+    res[:, 0] = points[1:, 0] - points[:-1, 0]
+    res[:, 1] = -(points[1:, 1] - points[:-1, 1])
 
-    for point in line_points:
-        if first:
-            first = False
-            res.append([0, 0, 0])
-            continue
-        x, y, end_status = point
-        # somehow image is flipped, so second coord is negated
-        res.append([x - cur_x, -(y - cur_y), end_status])
-        cur_x, cur_y = x, y
+    # end of stroke
+    res[:, 2] = points[1:, 2]
     return res
+
+
+def process_line_points(line_points: list) -> np.ndarray:
+    pts = np.array(line_points).astype(np.float16)
+    pts = relativize_line_points(pts)
+    pts = normalize_line_points(pts)
+    return pts
 
 
 def process_xml_file(path):
@@ -66,7 +85,7 @@ def process_xml_file(path):
                   for x in p_list]
         p_list[-1][2] = 1
         res_points.extend(p_list)
-    res_points = relativize_line_points(res_points)
+    res_points = process_line_points(res_points)
     return res_points
 
 
@@ -100,12 +119,8 @@ def main():
     lines = []
     translations = []
 
-    amt = 0
-    total_amt = 1711
     for cur_dir, sub_dirs, files in os.walk(lines_path):
         if not files: continue
-        print_progressbar(amt, total_amt, length=20)
-        amt += 1
         line_points = process_xml_dir(cur_dir)
         dir_id = get_dir_id(cur_dir)
         translation_lines = process_ascii_dir(dir_id)
@@ -117,14 +132,51 @@ def main():
     return lines, translations
 
 
+def prepare(line):
+    start = np.array([0., 0., 1.])
+    # drop last element to preserve shape
+    res = np.empty(line.shape)
+    res[0] = start
+    res[1:] = line[:-1]
+    return res
+
+
+def make_equal_lengths(dataset, margin=300):
+    """
+
+    Each line with less points then `margin` is dropped, each greater
+    is replaced by rule: "pick random continuous sample of size `margin`
+    len(target)//len(margin) times and append". According to
+    https://blog.otoro.net/2015/12/12/handwriting-generation-demo-in-tensorflow/
+    """
+    res = []
+    for line in dataset:
+        line_len = len(line)
+        if line_len < margin:
+            continue
+        if line_len == margin:
+            res.append(prepare(line))
+        else:
+            times = line_len // margin
+            for i in range(times):
+                start = random.randrange(0, line_len - margin)
+                sample = line[start: start + margin]
+                res.append(prepare(sample))
+    return res
+
+
 # batch_size: 1053
 if __name__ == '__main__':
-    lines, translations = main()
-    lines = pad_sequences(lines, value=[0, 0, 0],
-                          padding='pre', truncating='pre',
-                          maxlen=750)
+    import pickle
+    # lines, translations = main()
+    with open('data/lines.pkl', 'rb') as f:
+        lines = pickle.load(f)
+    lines = make_equal_lengths(lines)
+    # lines = pad_sequences(lines, value=[0., 0., 0.],
+    #                       padding='pre', truncating='pre',
+    #                       maxlen=750, dtype='float32')
 
-    translations = np.array(translations)
+    # translations = np.array(translations)
 
     with h5py.File('dataset.h5', 'w') as f:
         f.create_dataset('lines', data=lines)
